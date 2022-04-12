@@ -279,6 +279,13 @@ void TurboAssembler::CallBuiltin(Builtin builtin, Condition cond) {
   bind(&skip);
 }
 
+void TurboAssembler::TailCallBuiltin(Builtin builtin) {
+  ASM_CODE_COMMENT_STRING(this,
+                          CommentForOffHeapTrampoline("tail call", builtin));
+  mov(ip, Operand(BuiltinEntry(builtin), RelocInfo::OFF_HEAP_TARGET));
+  Jump(ip);
+}
+
 void TurboAssembler::Drop(int count) {
   if (count > 0) {
     AddS64(sp, sp, Operand(count * kSystemPointerSize), r0);
@@ -3603,6 +3610,19 @@ void TurboAssembler::CallBuiltinByIndex(Register builtin_index) {
   Call(builtin_index);
 }
 
+void TurboAssembler::LoadEntryFromBuiltin(Builtin builtin,
+                                          Register destination) {
+  ASM_CODE_COMMENT(this);
+  LoadU64(destination, EntryFromBuiltinAsOperand(builtin));
+}
+
+MemOperand TurboAssembler::EntryFromBuiltinAsOperand(Builtin builtin) {
+  ASM_CODE_COMMENT(this);
+  DCHECK(root_array_available());
+  return MemOperand(kRootRegister,
+                    IsolateData::BuiltinEntrySlotOffset(builtin));
+}
+
 void TurboAssembler::LoadCodeObjectEntry(Register destination,
                                          Register code_object) {
   // Code objects are called differently depending on whether we are generating
@@ -3707,9 +3727,8 @@ void TurboAssembler::CallForDeoptimization(Builtin target, int, Label* exit,
                          IsolateData::BuiltinEntrySlotOffset(target)));
   Call(ip);
   DCHECK_EQ(SizeOfCodeGeneratedSince(exit),
-            (kind == DeoptimizeKind::kLazy)
-                ? Deoptimizer::kLazyDeoptExitSize
-                : Deoptimizer::kNonLazyDeoptExitSize);
+            (kind == DeoptimizeKind::kLazy) ? Deoptimizer::kLazyDeoptExitSize
+                                            : Deoptimizer::kEagerDeoptExitSize);
 }
 
 void TurboAssembler::ZeroExtByte(Register dst, Register src) {

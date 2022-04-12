@@ -1074,20 +1074,6 @@ void Logger::IntPtrTEvent(const char* name, intptr_t value) {
   msg.WriteToLogFile();
 }
 
-void Logger::HandleEvent(const char* name, Address* location) {
-  if (!FLAG_log_handles) return;
-  MSG_BUILDER();
-  msg << name << kNext << reinterpret_cast<void*>(location);
-  msg.WriteToLogFile();
-}
-
-void Logger::WriteApiSecurityCheck() {
-  DCHECK(FLAG_log_api);
-  MSG_BUILDER();
-  msg << "api" << kNext << "check-security";
-  msg.WriteToLogFile();
-}
-
 void Logger::SharedLibraryEvent(const std::string& library_path,
                                 uintptr_t start, uintptr_t end,
                                 intptr_t aslr_slide) {
@@ -1158,39 +1144,6 @@ bool Logger::is_logging() {
       v8::LogEventStatus se);
 TIMER_EVENTS_LIST(V)
 #undef V
-
-void Logger::WriteApiNamedPropertyAccess(const char* tag, JSObject holder,
-                                         Object property_name) {
-  DCHECK(FLAG_log_api);
-  DCHECK(property_name.IsName());
-  MSG_BUILDER();
-  msg << "api" << kNext << tag << kNext << holder.class_name() << kNext
-      << Name::cast(property_name);
-  msg.WriteToLogFile();
-}
-
-void Logger::WriteApiIndexedPropertyAccess(const char* tag, JSObject holder,
-                                           uint32_t index) {
-  DCHECK(FLAG_log_api);
-  MSG_BUILDER();
-  msg << "api" << kNext << tag << kNext << holder.class_name() << kNext
-      << index;
-  msg.WriteToLogFile();
-}
-
-void Logger::WriteApiObjectAccess(const char* tag, JSReceiver object) {
-  DCHECK(FLAG_log_api);
-  MSG_BUILDER();
-  msg << "api" << kNext << tag << kNext << object.class_name();
-  msg.WriteToLogFile();
-}
-
-void Logger::WriteApiEntryCall(const char* name) {
-  DCHECK(FLAG_log_api);
-  MSG_BUILDER();
-  msg << "api" << kNext << name;
-  msg.WriteToLogFile();
-}
 
 void Logger::NewEvent(const char* name, void* object, size_t size) {
   if (!FLAG_log) return;
@@ -1392,7 +1345,7 @@ void Logger::FeedbackVectorEvent(FeedbackVector vector, AbstractCode code) {
   msg << kNext << reinterpret_cast<void*>(vector.address()) << kNext
       << vector.length();
   msg << kNext << reinterpret_cast<void*>(code.InstructionStart());
-  msg << kNext << vector.optimization_marker();
+  msg << kNext << vector.tiering_state();
   msg << kNext << vector.maybe_has_optimized_code();
   msg << kNext << vector.invocation_count();
   msg << kNext << vector.profiler_ticks() << kNext;
@@ -1608,15 +1561,6 @@ void Logger::MoveEventInternal(LogEventsAndTags event, Address from,
   MSG_BUILDER();
   msg << kLogEventsNames[event] << kNext << reinterpret_cast<void*>(from)
       << kNext << reinterpret_cast<void*>(to);
-  msg.WriteToLogFile();
-}
-
-void Logger::SuspectReadEvent(Name name, Object obj) {
-  if (!FLAG_log_suspect) return;
-  MSG_BUILDER();
-  String class_name = obj.IsJSObject() ? JSObject::cast(obj).class_name()
-                                       : ReadOnlyRoots(isolate_).empty_string();
-  msg << "suspect-read" << kNext << class_name << kNext << name;
   msg.WriteToLogFile();
 }
 
@@ -1931,6 +1875,8 @@ void Logger::LogCompiledFunctions() {
   existing_code_logger_.LogCompiledFunctions();
 }
 
+void Logger::LogBuiltins() { existing_code_logger_.LogBuiltins(); }
+
 void Logger::LogAccessorCallbacks() {
   Heap* heap = isolate_->heap();
   HeapObjectIterator iterator(heap);
@@ -2082,6 +2028,7 @@ void Logger::SetCodeEventHandler(uint32_t options,
     if (options & kJitCodeEventEnumExisting) {
       HandleScope scope(isolate_);
       LogCodeObjects();
+      LogBuiltins();
       LogCompiledFunctions();
     }
   }
@@ -2154,8 +2101,6 @@ void ExistingCodeLogger::LogCodeObject(Object object) {
     case CodeKind::BASELINE:
     case CodeKind::MAGLEV:
       return;  // We log this later using LogCompiledFunctions.
-    case CodeKind::BYTECODE_HANDLER:
-      return;  // We log it later by walking the dispatch table.
     case CodeKind::FOR_TESTING:
       description = "STUB code";
       tag = CodeEventListener::STUB_TAG;
@@ -2163,6 +2108,11 @@ void ExistingCodeLogger::LogCodeObject(Object object) {
     case CodeKind::REGEXP:
       description = "Regular expression code";
       tag = CodeEventListener::REG_EXP_TAG;
+      break;
+    case CodeKind::BYTECODE_HANDLER:
+      description =
+          isolate_->builtins()->name(abstract_code->GetCode().builtin_id());
+      tag = CodeEventListener::BYTECODE_HANDLER_TAG;
       break;
     case CodeKind::BUILTIN:
       if (Code::cast(object).is_interpreter_trampoline_builtin() &&
@@ -2210,6 +2160,16 @@ void ExistingCodeLogger::LogCodeObjects() {
        obj = iterator.Next()) {
     if (obj.IsCode()) LogCodeObject(obj);
     if (obj.IsBytecodeArray()) LogCodeObject(obj);
+  }
+}
+
+void ExistingCodeLogger::LogBuiltins() {
+  Builtins* builtins = isolate_->builtins();
+  DCHECK(builtins->is_initialized());
+  for (Builtin builtin = Builtins::kFirst; builtin <= Builtins::kLast;
+       ++builtin) {
+    Code code = FromCodeT(builtins->code(builtin));
+    LogCodeObject(code);
   }
 }
 

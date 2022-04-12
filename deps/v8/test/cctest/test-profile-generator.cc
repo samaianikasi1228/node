@@ -543,17 +543,9 @@ class DiscardedSamplesDelegateImpl : public v8::DiscardedSamplesDelegate {
   void Notify() override { CHECK_GT(GetId(), 0); }
 };
 
-class MockPlatform : public TestPlatform {
+class MockPlatform final : public TestPlatform {
  public:
-  MockPlatform()
-      : old_platform_(i::V8::GetCurrentPlatform()),
-        mock_task_runner_(new MockTaskRunner()) {
-    // Now that it's completely constructed, make this the current platform.
-    i::V8::SetPlatformForTesting(this);
-  }
-
-  // When done, explicitly revert to old_platform_.
-  ~MockPlatform() override { i::V8::SetPlatformForTesting(old_platform_); }
+  MockPlatform() : mock_task_runner_(new MockTaskRunner()) {}
 
   std::shared_ptr<v8::TaskRunner> GetForegroundTaskRunner(
       v8::Isolate*) override {
@@ -581,6 +573,8 @@ class MockPlatform : public TestPlatform {
     }
 
     bool IdleTasksEnabled() override { return false; }
+    bool NonNestableTasksEnabled() const override { return true; }
+    bool NonNestableDelayedTasksEnabled() const override { return true; }
 
     int posted_count() { return posted_count_; }
 
@@ -590,17 +584,15 @@ class MockPlatform : public TestPlatform {
     std::unique_ptr<Task> task_;
   };
 
-  v8::Platform* old_platform_;
   std::shared_ptr<MockTaskRunner> mock_task_runner_;
 };
 }  // namespace
 
-TEST(MaxSamplesCallback) {
+TEST_WITH_PLATFORM(MaxSamplesCallback, MockPlatform) {
   i::Isolate* isolate = CcTest::i_isolate();
   CpuProfilesCollection profiles(isolate);
   CpuProfiler profiler(isolate);
   profiles.set_cpu_profiler(&profiler);
-  MockPlatform* mock_platform = new MockPlatform();
   std::unique_ptr<DiscardedSamplesDelegateImpl> impl =
       std::make_unique<DiscardedSamplesDelegateImpl>(
           DiscardedSamplesDelegateImpl());
@@ -624,7 +616,7 @@ TEST(MaxSamplesCallback) {
   profiles.AddPathToCurrentProfiles(
       sample1.timestamp, symbolized.stack_trace, symbolized.src_line, true,
       base::TimeDelta(), StateTag::JS, EmbedderStateTag::EMPTY);
-  CHECK_EQ(0, mock_platform->posted_count());
+  CHECK_EQ(0, platform.posted_count());
   TickSample sample2;
   sample2.timestamp = v8::base::TimeTicks::Now();
   sample2.pc = ToPointer(0x1925);
@@ -634,7 +626,7 @@ TEST(MaxSamplesCallback) {
   profiles.AddPathToCurrentProfiles(
       sample2.timestamp, symbolized.stack_trace, symbolized.src_line, true,
       base::TimeDelta(), StateTag::JS, EmbedderStateTag::EMPTY);
-  CHECK_EQ(1, mock_platform->posted_count());
+  CHECK_EQ(1, platform.posted_count());
   TickSample sample3;
   sample3.timestamp = v8::base::TimeTicks::Now();
   sample3.pc = ToPointer(0x1510);
@@ -643,11 +635,10 @@ TEST(MaxSamplesCallback) {
   profiles.AddPathToCurrentProfiles(
       sample3.timestamp, symbolized.stack_trace, symbolized.src_line, true,
       base::TimeDelta(), StateTag::JS, EmbedderStateTag::EMPTY);
-  CHECK_EQ(1, mock_platform->posted_count());
+  CHECK_EQ(1, platform.posted_count());
 
   // Teardown
   profiles.StopProfiling(id);
-  delete mock_platform;
 }
 
 TEST(NoSamples) {

@@ -1112,6 +1112,13 @@ CodeGenerator::CodeGenResult CodeGenerator::AssembleArchInstruction(
       Register scratch1 = i.TempRegister(1);
       OutOfLineRecordWrite* ool;
 
+      if (FLAG_debug_code) {
+        // Checking that |value| is not a cleared weakref: our write barrier
+        // does not support that for now.
+        __ CmpS64(value, Operand(kClearedWeakHeapObjectLower32), kScratchReg);
+        __ Check(ne, AbortReason::kOperandIsCleared);
+      }
+
       AddressingMode addressing_mode =
           AddressingModeField::decode(instr->opcode());
       if (addressing_mode == kMode_MRI) {
@@ -4035,7 +4042,7 @@ void CodeGenerator::AssembleConstructFrame() {
     } else {
       StackFrame::Type type = info()->GetOutputStackFrameType();
       // TODO(mbrandy): Detect cases where ip is the entrypoint (for
-      // efficient intialization of the constant pool pointer register).
+      // efficient initialization of the constant pool pointer register).
       __ StubPrologue(type);
 #if V8_ENABLE_WEBASSEMBLY
       if (call_descriptor->IsWasmFunctionCall() ||
@@ -4243,11 +4250,10 @@ void CodeGenerator::PrepareForDeoptimizationExits(
   for (DeoptimizationExit* exit : deoptimization_exits_) {
     total_size += (exit->kind() == DeoptimizeKind::kLazy)
                       ? Deoptimizer::kLazyDeoptExitSize
-                      : Deoptimizer::kNonLazyDeoptExitSize;
+                      : Deoptimizer::kEagerDeoptExitSize;
   }
 
   __ CheckTrampolinePoolQuick(total_size);
-  DCHECK(Deoptimizer::kSupportsFixedDeoptExitSizes);
 }
 
 void CodeGenerator::AssembleMove(InstructionOperand* source,

@@ -642,6 +642,18 @@ static bool AllOnOnePage(uintptr_t start, int size) {
   return start_page == end_page;
 }
 
+static bool is_snan(float input) {
+  uint32_t kQuietNanFPBit = 1 << 22;
+  uint32_t InputAsUint = bit_cast<uint32_t>(input);
+  return isnan(input) && ((InputAsUint & kQuietNanFPBit) == 0);
+}
+
+static bool is_snan(double input) {
+  uint64_t kQuietNanDPBit = 1L << 51;
+  uint64_t InputAsUint = bit_cast<uint64_t>(input);
+  return isnan(input) && ((InputAsUint & kQuietNanDPBit) == 0);
+}
+
 void Simulator::set_last_debugger_input(char* input) {
   DeleteArray(last_debugger_input_);
   last_debugger_input_ = input;
@@ -1632,21 +1644,42 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
       set_register(rt, alu_out);
       break;
     }
+#define SET_ADDI_RESULT()               \
+  intptr_t alu_out;                     \
+  if (ra == 0) {                        \
+    alu_out = im_val;                   \
+  } else {                              \
+    intptr_t ra_val = get_register(ra); \
+    alu_out = ra_val + im_val;          \
+  }                                     \
+  set_register(rt, alu_out);
     case ADDI: {
       int rt = instr->RTValue();
       int ra = instr->RAValue();
       int32_t im_val = SIGN_EXT_IMM16(instr->Bits(15, 0));
-      intptr_t alu_out;
-      if (ra == 0) {
-        alu_out = im_val;
-      } else {
-        intptr_t ra_val = get_register(ra);
-        alu_out = ra_val + im_val;
-      }
-      set_register(rt, alu_out);
+      SET_ADDI_RESULT();
       // todo - handle RC bit
       break;
     }
+    case PPADDI: {
+      // Read prefix.
+      uint64_t prefix_value = instr->Bits(17, 0);
+      // Read suffix (next instruction).
+      Instruction* next_instr = bit_cast<Instruction*>(get_pc() + kInstrSize);
+      CHECK_EQ(ADDI, next_instr->OpcodeBase());
+      // Execute as a single instruction.
+      int rt = next_instr->RTValue();
+      int ra = next_instr->RAValue();
+      int64_t im_val;
+      uint16_t addi_value = next_instr->Bits(15, 0);
+      im_val = SIGN_EXT_IMM34(
+          static_cast<int64_t>((prefix_value << 16) | addi_value));
+      SET_ADDI_RESULT();
+      // We have now executed instructions at this as well as next pc.
+      set_pc(get_pc() + (2 * kInstrSize));
+      break;
+    }
+#undef SET_ADDI_RESULT
     case ADDIS: {
       int rt = instr->RTValue();
       int ra = instr->RAValue();
@@ -4763,7 +4796,7 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
           bit_cast<float, uint32_t>(static_cast<uint32_t>(double_bits >> 32));
       double_bits = bit_cast<uint64_t, double>(static_cast<double>(f));
       // Preserve snan.
-      if (issignaling(f)) {
+      if (is_snan(f)) {
         double_bits &= 0xFFF7FFFFFFFFFFFFU;  // Clear bit 51.
       }
       set_d_register(t, double_bits);
@@ -4776,7 +4809,7 @@ void Simulator::ExecuteGeneric(Instruction* instr) {
       uint64_t float_bits = static_cast<uint64_t>(
           bit_cast<uint32_t, float>(static_cast<float>(b_val)));
       // Preserve snan.
-      if (issignaling(b_val)) {
+      if (is_snan(b_val)) {
         float_bits &= 0xFFBFFFFFU;  // Clear bit 22.
       }
       // fp result is placed in both 32bit halfs of the dst.

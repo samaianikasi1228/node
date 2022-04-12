@@ -21,6 +21,7 @@
 #include "src/heap/list.h"
 #include "src/heap/memory-chunk-layout.h"
 #include "src/heap/memory-chunk.h"
+#include "src/heap/slot-set.h"
 #include "src/objects/objects.h"
 #include "src/utils/allocation.h"
 #include "src/utils/utils.h"
@@ -144,12 +145,12 @@ class V8_EXPORT_PRIVATE Space : public BaseSpace {
 
   // Returns size of objects. Can differ from the allocated size
   // (e.g. see OldLargeObjectSpace).
-  virtual size_t SizeOfObjects() { return Size(); }
+  virtual size_t SizeOfObjects() const { return Size(); }
 
   // Return the available bytes without growing.
-  virtual size_t Available() = 0;
+  virtual size_t Available() const = 0;
 
-  virtual int RoundSizeDownToObjectAlignment(int size) {
+  virtual int RoundSizeDownToObjectAlignment(int size) const {
     if (id_ == CODE_SPACE) {
       return RoundDown(size, kCodeAlignment);
     } else {
@@ -223,6 +224,9 @@ class Page : public MemoryChunk {
       MainThreadFlags(MemoryChunk::POINTERS_TO_HERE_ARE_INTERESTING) |
       MainThreadFlags(MemoryChunk::POINTERS_FROM_HERE_ARE_INTERESTING) |
       MainThreadFlags(MemoryChunk::INCREMENTAL_MARKING);
+
+  Page(Heap* heap, BaseSpace* space, size_t size, Address area_start,
+       Address area_end, VirtualMemory reservation, Executability executable);
 
   // Returns the page containing a given address. The address ranges
   // from [page_addr .. page_addr + kPageSize[. This only works if the object
@@ -306,10 +310,24 @@ class Page : public MemoryChunk {
   void AllocateFreeListCategories();
   void ReleaseFreeListCategories();
 
-  void MoveOldToNewRememberedSetForSweeping();
-  void MergeOldToNewRememberedSets();
-
   ActiveSystemPages* active_system_pages() { return &active_system_pages_; }
+
+  template <RememberedSetType remembered_set>
+  void ClearInvalidTypedSlots(const TypedSlotSet::FreeRangesMap& ranges) {
+    TypedSlotSet* typed_slot_set = this->typed_slot_set<remembered_set>();
+    if (typed_slot_set != nullptr) {
+      typed_slot_set->ClearInvalidSlots(ranges);
+    }
+  }
+
+  template <RememberedSetType remembered_set>
+  void AssertNoInvalidTypedSlots(const TypedSlotSet::FreeRangesMap& ranges) {
+    // TODO(dinfuehr): Make this a DCHECK eventually.
+    TypedSlotSet* typed_slot_set = this->typed_slot_set<OLD_TO_OLD>();
+    if (typed_slot_set != nullptr) {
+      typed_slot_set->AssertNoInvalidSlots(ranges);
+    }
+  }
 
  private:
   friend class MemoryAllocator;
@@ -353,6 +371,7 @@ class PageIteratorImpl
 using PageIterator = PageIteratorImpl<Page>;
 using ConstPageIterator = PageIteratorImpl<const Page>;
 using LargePageIterator = PageIteratorImpl<LargePage>;
+using ConstLargePageIterator = PageIteratorImpl<const LargePage>;
 
 class PageRange {
  public:
@@ -447,7 +466,7 @@ class SpaceWithLinearArea : public Space {
                       LinearAllocationArea* allocation_info)
       : Space(heap, id, free_list), allocation_info_(allocation_info) {}
 
-  virtual bool SupportsAllocationObserver() = 0;
+  virtual bool SupportsAllocationObserver() const = 0;
 
   // Returns the allocation pointer in this space.
   Address top() const { return allocation_info_->top(); }
@@ -485,7 +504,7 @@ class SpaceWithLinearArea : public Space {
   // area bounded by [start, end), this function computes the limit to use to
   // allow proper observation based on existing observers. min_size specifies
   // the minimum size that the limited area should have.
-  Address ComputeLimit(Address start, Address end, size_t min_size);
+  Address ComputeLimit(Address start, Address end, size_t min_size) const;
   V8_EXPORT_PRIVATE virtual void UpdateInlineAllocationLimit(
       size_t min_size) = 0;
 
@@ -493,7 +512,7 @@ class SpaceWithLinearArea : public Space {
   void EnableInlineAllocation();
   bool IsInlineAllocationEnabled() const { return use_lab_; }
 
-  void PrintAllocationsOrigins();
+  void PrintAllocationsOrigins() const;
 
  protected:
   V8_EXPORT_PRIVATE void UpdateAllocationOrigins(AllocationOrigin origin);

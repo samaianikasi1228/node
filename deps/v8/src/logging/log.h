@@ -88,6 +88,7 @@ class ExistingCodeLogger {
       : isolate_(isolate), listener_(listener) {}
 
   void LogCodeObjects();
+  void LogBuiltins();
 
   void LogCompiledFunctions();
   void LogExistingFunction(Handle<SharedFunctionInfo> shared,
@@ -141,16 +142,9 @@ class Logger : public CodeEventListener {
   // Emits an event with an int value -> (name, value).
   void IntPtrTEvent(const char* name, intptr_t value);
 
-  // Emits an event with an handle value -> (name, location).
-  void HandleEvent(const char* name, Address* location);
-
   // Emits memory management events for C allocated structures.
   void NewEvent(const char* name, void* object, size_t size);
   void DeleteEvent(const char* name, void* object);
-
-  // Emits an event that an undefined property was read from an
-  // object.
-  void SuspectReadEvent(Name name, Object obj);
 
   // ==== Events logged by --log-function-events ====
   void FunctionEvent(const char* reason, int script_id, double time_delta_ms,
@@ -165,30 +159,6 @@ class Logger : public CodeEventListener {
                              SharedFunctionInfo sfi);
   void ScriptEvent(ScriptEventType type, int script_id);
   void ScriptDetails(Script script);
-
-  // ==== Events logged by --log-api. ====
-  void ApiSecurityCheck() {
-    if (!FLAG_log_api) return;
-    WriteApiSecurityCheck();
-  }
-  void ApiNamedPropertyAccess(const char* tag, JSObject holder, Object name) {
-    if (!FLAG_log_api) return;
-    WriteApiNamedPropertyAccess(tag, holder, name);
-  }
-  void ApiIndexedPropertyAccess(const char* tag, JSObject holder,
-                                uint32_t index) {
-    if (!FLAG_log_api) return;
-    WriteApiIndexedPropertyAccess(tag, holder, index);
-  }
-
-  void ApiObjectAccess(const char* tag, JSReceiver obj) {
-    if (!FLAG_log_api) return;
-    WriteApiObjectAccess(tag, obj);
-  }
-  void ApiEntryCall(const char* name) {
-    if (!FLAG_log_api) return;
-    WriteApiEntryCall(name);
-  }
 
   // ==== Events logged by --log-code. ====
   V8_EXPORT_PRIVATE void AddCodeEventListener(CodeEventListener* listener);
@@ -303,6 +273,7 @@ class Logger : public CodeEventListener {
   V8_EXPORT_PRIVATE void LogAccessorCallbacks();
   // Used for logging stubs found in the snapshot.
   V8_EXPORT_PRIVATE void LogCodeObjects();
+  V8_EXPORT_PRIVATE void LogBuiltins();
   // Logs all Maps found on the heap.
   void LogAllMaps();
 
